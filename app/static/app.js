@@ -162,3 +162,47 @@ const params = new URLSearchParams(window.location.search);
 if (params.get('order')) {
   loadOrderDetails(params.get('order'));
 }
+
+const addOrderItemButton = document.getElementById('add-order-item');
+const orderItemsContainer = document.getElementById('order-items');
+
+function bindRemoveButtons() {
+  document.querySelectorAll('.order-item-remove').forEach((button) => {
+    button.onclick = () => {
+      const rows = document.querySelectorAll('.order-item-row');
+      if (rows.length === 1) {
+        const quantityInput = rows[0].querySelector('input[name="quantity"]');
+        const medicineInput = rows[0].querySelector('input[name="medicine_name"]');
+        if (quantityInput) quantityInput.value = 1;
+        if (medicineInput) medicineInput.value = '';
+        return;
+      }
+      button.closest('.order-item-row')?.remove();
+    };
+  });
+}
+
+if (addOrderItemButton && orderItemsContainer) {
+  addOrderItemButton.addEventListener('click', () => {
+    const row = document.createElement('div');
+    row.className = 'order-item-row';
+    row.innerHTML = `
+      <div class="field">
+        <label>Препарат</label>
+        <input name="medicine_name" list="medicine-options" placeholder="Нейрофарм" required>
+      </div>
+      <div class="field">
+        <label>Количество упаковок</label>
+        <input type="number" min="1" name="quantity" value="1" required>
+      </div>
+      <div class="field">
+        <label>Номер упаковки</label>
+        <input name="package_code" placeholder="PACK-01099 или свой код">
+      </div>
+      <button class="tiny-btn order-item-remove" type="button">Удалить</button>
+    `;
+    orderItemsContainer.appendChild(row);
+    bindRemoveButtons();
+  });
+  bindRemoveButtons();
+}

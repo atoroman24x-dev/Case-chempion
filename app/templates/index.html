@@ -27,7 +27,7 @@
       <div>
         <p class="eyebrow">Контроль цепочки движения препаратов</p>
         <h2>Заказы, их статусы и содержимое</h2>
-        <p class="hero-text">Система помогает искать заказ, серию или упаковку, смотреть текущее состояние заказов и открывать их содержимое с деталями по каждой упаковке.</p>
+        <p class="hero-text">Теперь заказ можно создать как отдельную сущность: выбрать клиента, точку сборки, добавить несколько препаратов и нужное количество упаковок по каждой позиции.</p>
       </div>
     </section>
 
@@ -80,7 +80,28 @@
           </div>
         </section>
 
-
+        <section class="panel">
+          <div class="section-title-row"><h3>Свободный остаток</h3><span class="count-pill">{{ stock_items|length }}</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Препарат</th>
+                  <th>Свободных упаковок</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in stock_items %}
+                <tr>
+                  <td>{{ item.medicine_name }}</td>
+                  <td>{{ item.qty }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="2" class="empty-cell">Свободных остатков нет</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </section>
       </div>
 
@@ -94,21 +115,79 @@
         </section>
 
         <section class="panel form-panel">
+          <h3>Создать новый заказ</h3>
+          <form method="post" action="/orders/create" class="stack-form" id="create-order-form">
+            <div class="field">
+              <label>Клиент</label>
+              <input name="client_name" list="client-options" placeholder="Аптека Вита" required>
+              <datalist id="client-options">
+                {% for client in clients %}
+                <option value="{{ client }}"></option>
+                {% endfor %}
+              </datalist>
+            </div>
+
+            <div class="field">
+              <label>Точка сборки / склад</label>
+              <select name="warehouse" required>
+                {% for warehouse in warehouses %}
+                <option value="{{ warehouse }}">{{ warehouse }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Дата и время создания</label>
+              <input type="datetime-local" name="created_at" required>
+            </div>
+
+            <div class="field">
+              <label>Комментарий</label>
+              <textarea name="comment" rows="2" placeholder="Срочная отгрузка, клиент ждёт подтверждение"></textarea>
+            </div>
+
+            <div class="field-group">
+              <div class="section-title-row">
+                <h4>Позиции заказа</h4>
+                <button class="tiny-btn" type="button" id="add-order-item">+ Добавить строку</button>
+              </div>
+
+              <div id="order-items">
+                <div class="order-item-row">
+                  <div class="field">
+                    <label>Препарат</label>
+                    <input name="medicine_name" list="medicine-options" placeholder="Кардиолекс" required>
+                  </div>
+                  <div class="field">
+                    <label>Количество упаковок</label>
+                    <input type="number" min="1" name="quantity" value="1" required>
+                  </div>
+                  <div class="field">
+                    <label>Номер упаковки</label>
+                    <input name="package_code" placeholder="PACK-01099 или свой код">
+                  </div>
+                  <button class="tiny-btn order-item-remove" type="button">Удалить</button>
+                </div>
+              </div>
+
+              <datalist id="medicine-options">
+                {% for medicine in medicines %}
+                <option value="{{ medicine }}"></option>
+                {% endfor %}
+              </datalist>
+            </div>
+
+            <button class="btn btn-primary" type="submit">Создать заказ</button>
+          </form>
+        </section>
+
+        <section class="panel form-panel">
           <h3>Добавить событие</h3>
           <form method="post" action="/events" class="stack-form">
             <div class="field"><label>Код упаковки</label><input name="package_code" placeholder="PACK-00017" required></div>
             <div class="field"><label>Номер заказа</label><input name="order_number" placeholder="ORD-1015"></div>
             <div class="field"><label>Тип события</label><select name="event_type">{% for key, label in event_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
-            <div class="field">
-  <label>Статус</label>
-  <select name="status">
-    {% for key, label in statuses.items() %}
-      {% if key != 'delayed' %}
-        <option value="{{ key }}">{{ label }}</option>
-      {% endif %}
-    {% endfor %}
-  </select>
-</div>
+            <div class="field"><label>Статус</label><select name="status">{% for key, label in statuses.items() if key != 'delayed' %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
             <div class="field"><label>Локация</label><input name="location" placeholder="Склад Ростов" required></div>
             <div class="field"><label>Контрагент</label><input name="counterparty" placeholder="Аптека Вита / Склад Москва"></div>
             <div class="field"><label>Дата и время</label><input type="datetime-local" name="event_time" required></div>
