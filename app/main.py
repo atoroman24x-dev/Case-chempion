@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import random
 import sqlite3
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -29,7 +28,6 @@ PACKAGE_STATUSES = {
     "moved": "Перемещено",
     "shipped": "Отгружено",
     "delivered": "У клиента",
-    "delayed": "Нет подтверждения",
 }
 ORDER_STATUS_META = {
     "assembling": {"label": "В сборке", "tone": "gray"},
@@ -44,7 +42,6 @@ EVENT_TYPES = {
     "shipped": "Отгрузка",
     "delivered": "Доставка",
 }
-DELAY_HOURS = 96
 
 
 def get_conn() -> sqlite3.Connection:
@@ -55,24 +52,18 @@ def get_conn() -> sqlite3.Connection:
 
 def get_batch_prefix(medicine_name: str) -> str:
     cleaned = "".join(ch for ch in medicine_name.upper() if ch.isalnum())
-    return (cleaned[:2] or "NP").ljust(2, "X")
+    return (cleaned[:2] or "MD").ljust(2, "X")
 
 
 def generate_batch_number(cur: sqlite3.Cursor, medicine_name: str) -> str:
     prefix = get_batch_prefix(medicine_name)
-    suffix = datetime.now().strftime("%y%m%d%H%M")
-    candidate = f"BATCH-{prefix}{suffix}"
-    existing = cur.execute("SELECT 1 FROM packages WHERE batch_number = ? LIMIT 1", (candidate,)).fetchone()
-    if not existing:
-        return candidate
-
-    counter = 2
-    while True:
-        candidate = f"BATCH-{prefix}{suffix}-{counter}"
-        existing = cur.execute("SELECT 1 FROM packages WHERE batch_number = ? LIMIT 1", (candidate,)).fetchone()
-        if not existing:
-            return candidate
-        counter += 1
+    base = datetime.now().strftime("%y%m%d%H%M")
+    candidate = f"BATCH-{prefix}{base}"
+    n = 1
+    while cur.execute("SELECT 1 FROM packages WHERE batch_number = ? LIMIT 1", (candidate,)).fetchone():
+        n += 1
+        candidate = f"BATCH-{prefix}{base}-{n}"
+    return candidate
 
 
 def ensure_schema() -> None:
@@ -106,7 +97,7 @@ def ensure_schema() -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_number TEXT UNIQUE NOT NULL,
             client_name TEXT NOT NULL,
-            status_code TEXT NOT NULL DEFAULT 'assembling',
+            status_code TEXT NOT NULL,
             created_at TEXT NOT NULL,
             comment TEXT
         );
@@ -121,228 +112,91 @@ def ensure_schema() -> None:
         );
         """
     )
-    cols = [r[1] for r in cur.execute("PRAGMA table_info(events)").fetchall()]
-    if "order_number" not in cols:
-        cur.execute("ALTER TABLE events ADD COLUMN order_number TEXT")
     if cur.execute("SELECT COUNT(*) FROM packages").fetchone()[0] == 0:
-        seed_data(cur)
-    backfill_orders(cur)
+        seed_all(cur)
     conn.commit()
     conn.close()
 
 
-def seed_data(cur: sqlite3.Cursor) -> None:
-    random.seed(42)
-    series = [
-        ("BATCH-AX2401", "Кардиолекс", 18),
-        ("BATCH-BM2402", "Нейрофарм", 16),
-        ("BATCH-CT2403", "Иммуновир", 15),
-        ("BATCH-DL2404", "Пульсофен", 14),
-        ("BATCH-EK2405", "Терафлокс", 17),
-        ("BATCH-FR2406", "Гепталин", 13),
-        ("BATCH-GS2407", "Реновит", 19),
-        ("BATCH-HN2408", "Виромакс", 12),
-    ]
-    orders = ["ORD-1001", "ORD-1002", "ORD-1003", "ORD-1004", "ORD-1005", "ORD-1006", "ORD-1007", "ORD-1008", "ORD-1009", "ORD-1010"]
-    order_statuses = {
-        "ORD-1001": "assembling",
-        "ORD-1002": "seller",
-        "ORD-1003": "pickup",
-        "ORD-1004": "delivered",
-        "ORD-1005": "seller",
-        "ORD-1006": "pickup",
-        "ORD-1007": "assembling",
-        "ORD-1008": "delivered",
-        "ORD-1009": "seller",
-        "ORD-1010": "assembling",
-    }
-    order_pool = []
-    for order in orders:
-        order_pool.extend([order] * random.randint(4, 8))
-    random.shuffle(order_pool)
-
-    now = datetime.now() - timedelta(days=24)
-    package_index = 1
-    for batch_number, medicine_name, qty in series:
-        for item_idx in range(qty):
-            package_code = f"PACK-{package_index:05d}"
-            produced_at = now + timedelta(hours=package_index * 2)
-            is_unassigned = item_idx < max(2, qty // 3)
-            assigned_order = None if is_unassigned else (order_pool.pop() if order_pool else f"ORD-{1000 + package_index}")
-            cur.execute(
-                "INSERT INTO packages (package_code, batch_number, medicine_name, produced_at) VALUES (?, ?, ?, ?)",
-                (package_code, batch_number, medicine_name, produced_at.isoformat(timespec="minutes")),
-            )
-            package_id = cur.lastrowid
-            current_time = produced_at
-            first_warehouse = random.choice(WAREHOUSES)
-            timeline = [
-                ("produced", "produced", "Производитель", None, current_time, "Выпущено на линии", assigned_order),
-            ]
-            current_time += timedelta(hours=random.randint(6, 18))
-            timeline.append(("accepted", "accepted", first_warehouse, "Производитель", current_time, "Первичная приёмка", assigned_order))
-
-            if is_unassigned:
-                if random.random() > 0.55:
-                    current_time += timedelta(hours=random.randint(8, 24))
-                    next_warehouse = random.choice([w for w in WAREHOUSES if w != first_warehouse])
-                    timeline.append(("moved", "moved", next_warehouse, first_warehouse, current_time, "Перемещено между складами, заказ не создан", None))
-            else:
-                order_stage = order_statuses.get(assigned_order, "seller")
-                if order_stage in {"seller", "pickup", "delivered"}:
-                    current_time += timedelta(hours=random.randint(10, 28))
-                    next_warehouse = random.choice([w for w in WAREHOUSES if w != first_warehouse])
-                    timeline.append(("moved", "moved", next_warehouse, first_warehouse, current_time, "Перемещение внутри цепочки", assigned_order))
-                if order_stage in {"pickup", "delivered"}:
-                    current_time += timedelta(hours=random.randint(8, 18))
-                    client = random.choice(CLIENTS)
-                    timeline.append(("shipped", "shipped", "Пункт выдачи", client, current_time, "Подготовлено к выдаче", assigned_order))
-                if order_stage == "delivered":
-                    current_time += timedelta(hours=random.randint(6, 18))
-                    client = random.choice(CLIENTS)
-                    timeline.append(("delivered", "delivered", "Получено пользователем", client, current_time, "Заказ завершён", assigned_order))
-
-            for event_type, status, location, counterparty, event_time, note, order_number in timeline:
-                cur.execute(
-                    "INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (package_id, event_type, status, location, counterparty, event_time.isoformat(timespec="minutes"), note, order_number),
-                )
-            package_index += 1
-
-
-def get_last_event(cur: sqlite3.Cursor, package_id: int) -> Optional[sqlite3.Row]:
+def latest_event(cur: sqlite3.Cursor, package_id: int):
     return cur.execute(
         "SELECT * FROM events WHERE package_id = ? ORDER BY datetime(event_time) DESC, id DESC LIMIT 1",
         (package_id,),
     ).fetchone()
 
 
-def enrich_package(cur: sqlite3.Cursor, package_row: sqlite3.Row) -> dict:
-    last_event = get_last_event(cur, package_row["id"])
-    stale = False
-    warning = None
-    status_label = PACKAGE_STATUSES.get(last_event["status"], last_event["status"]) if last_event else "Нет событий"
-    if last_event:
-        hours_since = (datetime.now() - datetime.fromisoformat(last_event["event_time"])).total_seconds() / 3600
-        if hours_since > DELAY_HOURS and last_event["status"] != "delivered":
-            stale = True
-            warning = "Давно не было обновлений, показано последнее подтверждённое место."
-    return {
-        "id": package_row["id"],
-        "package_code": package_row["package_code"],
-        "batch_number": package_row["batch_number"],
-        "medicine_name": package_row["medicine_name"],
-        "produced_at": package_row["produced_at"],
-        "last_location": last_event["location"] if last_event else "—",
-        "status_label": status_label,
-        "last_event_time": last_event["event_time"] if last_event else None,
-        "warning": warning,
-        "stale": stale,
-        "order_number": last_event["order_number"] if last_event and last_event["order_number"] else None,
-        "raw_status": last_event["status"] if last_event else "accepted",
-    }
+def create_package(cur: sqlite3.Cursor, package_code: str, batch_number: str, medicine_name: str, produced_at: datetime):
+    cur.execute(
+        "INSERT INTO packages (package_code, batch_number, medicine_name, produced_at) VALUES (?, ?, ?, ?)",
+        (package_code, batch_number, medicine_name, produced_at.isoformat(timespec="minutes")),
+    )
+    return cur.lastrowid
 
 
-def resolve_order_status(items: list[dict]) -> dict:
-    raw_statuses = {item["raw_status"] for item in items}
-    if raw_statuses == {"delivered"}:
-        return {"code": "delivered", **ORDER_STATUS_META["delivered"]}
-    if "shipped" in raw_statuses or "delivered" in raw_statuses:
-        return {"code": "pickup", **ORDER_STATUS_META["pickup"]}
-    if "moved" in raw_statuses:
-        return {"code": "seller", **ORDER_STATUS_META["seller"]}
-    return {"code": "assembling", **ORDER_STATUS_META["assembling"]}
+def add_event(
+    cur: sqlite3.Cursor,
+    package_id: int,
+    event_type: str,
+    status: str,
+    location: str,
+    event_time: datetime,
+    note: str,
+    order_number: str | None = None,
+    counterparty: str | None = None,
+):
+    cur.execute(
+        """
+        INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            package_id,
+            event_type,
+            status,
+            location,
+            counterparty,
+            event_time.isoformat(timespec="minutes"),
+            note,
+            order_number,
+        ),
+    )
 
 
-def next_order_number(cur: sqlite3.Cursor) -> str:
-    row = cur.execute("SELECT order_number FROM orders ORDER BY id DESC LIMIT 1").fetchone()
-    if row and row["order_number"].startswith("ORD-"):
-        try:
-            return f"ORD-{int(row['order_number'].split('-')[1]) + 1}"
-        except ValueError:
-            pass
-    event_row = cur.execute(
-        "SELECT order_number FROM events WHERE order_number IS NOT NULL ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if event_row and event_row["order_number"] and event_row["order_number"].startswith("ORD-"):
-        try:
-            return f"ORD-{int(event_row['order_number'].split('-')[1]) + 1}"
-        except ValueError:
-            pass
-    return "ORD-1011"
+def create_manual_package_for_order(cur: sqlite3.Cursor, package_code: str, medicine_name: str, warehouse: str, created_at: str):
+    existing = cur.execute("SELECT * FROM packages WHERE package_code = ?", (package_code,)).fetchone()
+    if existing:
+        return existing
+
+    dt = datetime.fromisoformat(created_at)
+    batch_number = generate_batch_number(cur, medicine_name)
+    package_id = create_package(cur, package_code, batch_number, medicine_name, dt)
+    add_event(
+        cur,
+        package_id,
+        "accepted",
+        "accepted",
+        warehouse,
+        dt,
+        "Создана новая партия из одной упаковки по ручному номеру",
+        None,
+        "Ручной ввод",
+    )
+    return cur.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
 
 
-def backfill_orders(cur: sqlite3.Cursor) -> None:
-    existing_orders = {row["order_number"] for row in cur.execute("SELECT order_number FROM orders").fetchall()}
-    event_orders = cur.execute(
-        "SELECT DISTINCT order_number FROM events WHERE order_number IS NOT NULL AND TRIM(order_number) != '' ORDER BY order_number"
-    ).fetchall()
-
-    for row in event_orders:
-        order_number = row["order_number"]
-        package_rows = cur.execute(
-            """
-            SELECT DISTINCT p.*
-            FROM packages p
-            JOIN events e ON e.package_id = p.id
-            WHERE e.order_number = ?
-            ORDER BY p.id
-            """,
-            (order_number,),
-        ).fetchall()
-        if not package_rows:
-            continue
-
-        items = [enrich_package(cur, pkg) for pkg in package_rows]
-        status_meta = resolve_order_status(items)
-        latest_event = cur.execute(
-            "SELECT event_time FROM events WHERE order_number = ? ORDER BY datetime(event_time) DESC, id DESC LIMIT 1",
-            (order_number,),
-        ).fetchone()
-        created_at = latest_event["event_time"] if latest_event else datetime.now().isoformat(timespec="minutes")
-
-        order_row = cur.execute("SELECT id FROM orders WHERE order_number = ?", (order_number,)).fetchone()
-        if not order_row:
-            cur.execute(
-                "INSERT INTO orders (order_number, client_name, status_code, created_at, comment) VALUES (?, ?, ?, ?, ?)",
-                (
-                    order_number,
-                    random.choice(CLIENTS),
-                    status_meta["code"],
-                    created_at,
-                    "Импортировано из истории событий",
-                ),
-            )
-            order_id = cur.lastrowid
-        else:
-            order_id = order_row["id"]
-            cur.execute(
-                "UPDATE orders SET status_code = ?, created_at = ?, comment = COALESCE(comment, ?) WHERE id = ?",
-                (status_meta["code"], created_at, "Импортировано из истории событий", order_id),
-            )
-            cur.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
-
-        grouped = Counter(item["medicine_name"] for item in items)
-        for medicine_name, qty in grouped.items():
-            cur.execute(
-                "INSERT INTO order_items (order_id, medicine_name, quantity, assigned_quantity) VALUES (?, ?, ?, ?)",
-                (order_id, medicine_name, qty, qty),
-            )
-
-
-def list_free_packages(cur: sqlite3.Cursor, medicine_name: str, limit: int) -> list[sqlite3.Row]:
-    return cur.execute(
+def free_packages_by_medicine(cur: sqlite3.Cursor, medicine_name: str, limit: int):
+    rows = cur.execute(
         """
         SELECT p.*
         FROM packages p
         JOIN (
-            SELECT e1.package_id, e1.order_number, e1.status, e1.event_time
+            SELECT e1.package_id, e1.status, e1.location, e1.order_number, e1.event_time
             FROM events e1
             JOIN (
                 SELECT package_id, MAX(datetime(event_time)) AS max_time
                 FROM events
                 GROUP BY package_id
-            ) latest ON latest.package_id = e1.package_id AND datetime(e1.event_time) = latest.max_time
+            ) x ON x.package_id = e1.package_id AND datetime(e1.event_time) = x.max_time
         ) last_event ON last_event.package_id = p.id
         WHERE p.medicine_name = ?
           AND (last_event.order_number IS NULL OR TRIM(last_event.order_number) = '')
@@ -352,169 +206,198 @@ def list_free_packages(cur: sqlite3.Cursor, medicine_name: str, limit: int) -> l
         """,
         (medicine_name, limit),
     ).fetchall()
+    return rows
 
 
-def create_manual_package(
-    cur: sqlite3.Cursor,
-    package_code: str,
-    medicine_name: str,
-    warehouse: str,
-    created_at: str,
-) -> sqlite3.Row:
-    batch_number = generate_batch_number(cur, medicine_name)
-    cur.execute(
-        "INSERT INTO packages (package_code, batch_number, medicine_name, produced_at) VALUES (?, ?, ?, ?)",
-        (package_code, batch_number, medicine_name, created_at),
-    )
-    package_id = cur.lastrowid
-    cur.execute(
-        "INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            package_id,
-            "accepted",
-            "accepted",
-            warehouse,
-            "Ручное создание",
-            created_at,
-            "Создана новая партия из одной упаковки по номеру, введённому вручную",
-            None,
-        ),
-    )
-    return cur.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
+def seed_all(cur: sqlite3.Cursor) -> None:
+    random.seed(42)
 
+    series_plan = [
+        ("BATCH-AX2401", "Кардиолекс", 28),
+        ("BATCH-BM2402", "Нейрофарм", 26),
+        ("BATCH-CT2403", "Иммуновир", 24),
+        ("BATCH-DL2404", "Пульсофен", 22),
+        ("BATCH-EK2405", "Терафлокс", 27),
+        ("BATCH-FR2406", "Гепталин", 21),
+        ("BATCH-GS2407", "Реновит", 30),
+        ("BATCH-HN2408", "Виромакс", 20),
+        ("BATCH-JP2409", "Кардиолекс", 18),
+        ("BATCH-KQ2410", "Нейрофарм", 17),
+        ("BATCH-LR2411", "Иммуновир", 16),
+        ("BATCH-MS2412", "Пульсофен", 15),
+    ]
 
-def reserve_package_for_order(
-    cur: sqlite3.Cursor,
-    package_id: int,
-    warehouse: str,
-    client_name: str,
-    event_time: str,
-    order_number: str,
-    note: str,
-) -> None:
-    cur.execute(
-        "INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            package_id,
-            "accepted",
-            "accepted",
-            warehouse,
-            client_name,
-            event_time,
-            note,
-            order_number,
-        ),
-    )
+    base_time = datetime.now() - timedelta(days=24)
+    package_index = 1
 
+    for batch_number, medicine_name, qty in series_plan:
+        for item_idx in range(qty):
+            package_code = f"PACK-{package_index:05d}"
+            produced_at = base_time + timedelta(hours=package_index * 2)
+            package_id = create_package(cur, package_code, batch_number, medicine_name, produced_at)
 
-def create_order_with_items(
-    cur: sqlite3.Cursor,
-    client_name: str,
-    requested_items: list[dict],
-    warehouse: str,
-    created_at: str,
-    comment: str,
-) -> tuple[str, list[dict]]:
-    order_number = next_order_number(cur)
-    cur.execute(
-        "INSERT INTO orders (order_number, client_name, status_code, created_at, comment) VALUES (?, ?, ?, ?, ?)",
-        (order_number, client_name, "assembling", created_at, comment or None),
-    )
-    order_id = cur.lastrowid
-    allocation_report = []
-
-    current_time = datetime.fromisoformat(created_at)
-
-    for item in requested_items:
-        medicine_name = item["medicine_name"]
-        quantity = item["quantity"]
-        package_code = item.get("package_code", "").strip()
-
-        assigned_packages = []
-
-        if package_code:
-            existing_package = cur.execute(
-                "SELECT * FROM packages WHERE package_code = ? LIMIT 1",
-                (package_code,),
-            ).fetchone()
-
-            if existing_package:
-                assigned_packages.append(existing_package)
-            else:
-                created_package = create_manual_package(cur, package_code, medicine_name, warehouse, created_at)
-                assigned_packages.append(created_package)
-
-            additional_needed = max(0, quantity - len(assigned_packages))
-            if additional_needed > 0:
-                extra_packages = list_free_packages(cur, medicine_name, additional_needed)
-                assigned_packages.extend(extra_packages)
-        else:
-            assigned_packages = list_free_packages(cur, medicine_name, quantity)
-
-        unique_packages = []
-        seen_ids = set()
-        for pkg in assigned_packages:
-            if pkg["id"] not in seen_ids:
-                unique_packages.append(pkg)
-                seen_ids.add(pkg["id"])
-
-        assigned_quantity = len(unique_packages)
-
-        cur.execute(
-            "INSERT INTO order_items (order_id, medicine_name, quantity, assigned_quantity) VALUES (?, ?, ?, ?)",
-            (order_id, medicine_name, quantity, assigned_quantity),
-        )
-
-        allocation_report.append(
-            {
-                "medicine_name": medicine_name,
-                "requested": quantity,
-                "assigned": assigned_quantity,
-                "missing": quantity - assigned_quantity,
-                "package_code": package_code or None,
-            }
-        )
-
-        for package in unique_packages:
-            current_time += timedelta(minutes=3)
-            reserve_package_for_order(
+            first_wh = random.choice(WAREHOUSES)
+            add_event(cur, package_id, "produced", "produced", "Производитель", produced_at, "Выпущено на линии")
+            add_event(
                 cur,
-                package["id"],
-                warehouse,
-                client_name,
-                current_time.isoformat(timespec="minutes"),
-                order_number,
-                "Упаковка зарезервирована под новый заказ",
+                package_id,
+                "accepted",
+                "accepted",
+                first_wh,
+                produced_at + timedelta(hours=random.randint(6, 18)),
+                "Первичная приёмка на складе",
             )
 
-    return order_number, allocation_report
+            if item_idx % 4 == 0:
+                second_wh = random.choice([w for w in WAREHOUSES if w != first_wh])
+                add_event(
+                    cur,
+                    package_id,
+                    "moved",
+                    "moved",
+                    second_wh,
+                    produced_at + timedelta(hours=random.randint(20, 40)),
+                    "Перемещено между складами, заказ не создан",
+                )
 
+            package_index += 1
 
-def build_order_summary(packages: list[dict]) -> list[dict]:
-    grouped = defaultdict(list)
-    for item in packages:
-        if item["order_number"]:
-            grouped[item["order_number"]].append(item)
-    orders = []
-    for order_number, items in grouped.items():
-        items = sorted(items, key=lambda x: x["package_code"])
-        locations = Counter(i["last_location"] for i in items)
-        latest_time = max((i["last_event_time"] for i in items if i["last_event_time"]), default=None)
-        status_meta = resolve_order_status(items)
-        orders.append(
-            {
-                "order_number": order_number,
-                "items_count": len(items),
-                "medicine_count": len(set(i["medicine_name"] for i in items)),
-                "locations": dict(locations),
-                "latest_time": latest_time,
-                "status_code": status_meta["code"],
-                "status_label": status_meta["label"],
-                "status_tone": status_meta["tone"],
-                "items": items,
-            }
+    order_number_list = [f"ORD-{n}" for n in range(1001, 1125)]
+
+    for idx, order_number in enumerate(order_number_list, start=1):
+        if idx <= 35:
+            requested_positions = random.randint(2, 4)
+        elif idx <= 85:
+            requested_positions = random.randint(2, 3)
+        else:
+            requested_positions = random.randint(2, 3)
+
+        if idx % 7 == 0:
+            status_code = "delivered"
+        elif idx % 5 == 0:
+            status_code = "pickup"
+        elif idx % 2 == 0:
+            status_code = "seller"
+        else:
+            status_code = "assembling"
+
+        client_name = random.choice(CLIENTS)
+        created_at = (base_time + timedelta(days=idx // 3, hours=idx % 11)).isoformat(timespec="minutes")
+
+        cur.execute(
+            "INSERT INTO orders (order_number, client_name, status_code, created_at, comment) VALUES (?, ?, ?, ?, ?)",
+            (
+                order_number,
+                client_name,
+                status_code,
+                created_at,
+                "Сгенерировано для демо-показа",
+            ),
         )
-    return sorted(orders, key=lambda x: x["order_number"])
+        order_id = cur.lastrowid
+
+        selected_medicines = random.sample(MEDICINES, k=min(requested_positions, len(MEDICINES)))
+        for med_idx, medicine_name in enumerate(selected_medicines):
+            quantity = 1
+            if idx <= 35:
+                quantity = random.randint(2, 4)
+            elif idx <= 85:
+                quantity = random.randint(2, 3)
+            else:
+                quantity = random.randint(1, 2)
+
+            packages = free_packages_by_medicine(cur, medicine_name, quantity)
+            assigned = list(packages)
+
+            while len(assigned) < quantity:
+                manual_code = f"PACK-X{idx:03d}{med_idx}{len(assigned)+1}"
+                manual_package = create_manual_package_for_order(
+                    cur,
+                    manual_code,
+                    medicine_name,
+                    random.choice(WAREHOUSES),
+                    created_at,
+                )
+                assigned.append(manual_package)
+
+            cur.execute(
+                "INSERT INTO order_items (order_id, medicine_name, quantity, assigned_quantity) VALUES (?, ?, ?, ?)",
+                (order_id, medicine_name, quantity, len(assigned)),
+            )
+
+            for p_idx, package in enumerate(assigned):
+                pack_row = cur.execute("SELECT * FROM packages WHERE id = ?", (package["id"],)).fetchone()
+                last = latest_event(cur, pack_row["id"])
+                event_time = datetime.fromisoformat(created_at) + timedelta(minutes=(med_idx * 20) + (p_idx + 1) * 3)
+                start_location = last["location"] if last else random.choice(WAREHOUSES)
+
+                add_event(
+                    cur,
+                    pack_row["id"],
+                    "accepted",
+                    "accepted",
+                    start_location,
+                    event_time,
+                    "Упаковка зарезервирована под заказ",
+                    order_number,
+                    client_name,
+                )
+
+                if status_code in {"seller", "pickup", "delivered"}:
+                    seller_location = random.choice(WAREHOUSES)
+                    add_event(
+                        cur,
+                        pack_row["id"],
+                        "moved",
+                        "moved",
+                        seller_location,
+                        event_time + timedelta(hours=8),
+                        "Передано продавцу",
+                        order_number,
+                        client_name,
+                    )
+
+                if status_code in {"pickup", "delivered"}:
+                    add_event(
+                        cur,
+                        pack_row["id"],
+                        "shipped",
+                        "shipped",
+                        "Пункт выдачи",
+                        event_time + timedelta(hours=18),
+                        "Подготовлено к выдаче клиенту",
+                        order_number,
+                        client_name,
+                    )
+
+                if status_code == "delivered":
+                    add_event(
+                        cur,
+                        pack_row["id"],
+                        "delivered",
+                        "delivered",
+                        "Получено пользователем",
+                        event_time + timedelta(hours=28),
+                        "Клиент подтвердил получение",
+                        order_number,
+                        client_name,
+                    )
+
+
+def package_payload(cur: sqlite3.Cursor, package_row: sqlite3.Row) -> dict:
+    last = latest_event(cur, package_row["id"])
+    return {
+        "id": package_row["id"],
+        "package_code": package_row["package_code"],
+        "batch_number": package_row["batch_number"],
+        "medicine_name": package_row["medicine_name"],
+        "produced_at": package_row["produced_at"],
+        "last_location": last["location"] if last else "—",
+        "status_label": PACKAGE_STATUSES.get(last["status"], "Нет статуса") if last else "Нет статуса",
+        "last_event_time": last["event_time"] if last else None,
+        "order_number": last["order_number"] if last else None,
+        "raw_status": last["status"] if last else "accepted",
+    }
 
 
 def stock_summary(cur: sqlite3.Cursor) -> list[dict]:
@@ -523,13 +406,13 @@ def stock_summary(cur: sqlite3.Cursor) -> list[dict]:
         SELECT p.medicine_name, COUNT(*) AS qty
         FROM packages p
         JOIN (
-            SELECT e1.package_id, e1.order_number, e1.status, e1.event_time
+            SELECT e1.package_id, e1.status, e1.order_number, e1.event_time
             FROM events e1
             JOIN (
                 SELECT package_id, MAX(datetime(event_time)) AS max_time
                 FROM events
                 GROUP BY package_id
-            ) latest ON latest.package_id = e1.package_id AND datetime(e1.event_time) = latest.max_time
+            ) x ON x.package_id = e1.package_id AND datetime(e1.event_time) = x.max_time
         ) last_event ON last_event.package_id = p.id
         WHERE last_event.order_number IS NULL OR TRIM(last_event.order_number) = ''
         GROUP BY p.medicine_name
@@ -539,31 +422,69 @@ def stock_summary(cur: sqlite3.Cursor) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def order_summary_rows(cur: sqlite3.Cursor, search_order: str = "") -> list[dict]:
+    params = []
+    query = """
+        SELECT *
+        FROM orders
+        WHERE 1=1
+    """
+    if search_order:
+        query += " AND order_number LIKE ?"
+        params.append(f"%{search_order.strip()}%")
+    query += " ORDER BY id ASC"
+
+    rows = cur.execute(query, params).fetchall()
+    result = []
+
+    for order in rows:
+        packages = cur.execute(
+            """
+            SELECT DISTINCT p.*
+            FROM packages p
+            JOIN events e ON e.package_id = p.id
+            WHERE e.order_number = ?
+            ORDER BY p.id
+            """,
+            (order["order_number"],),
+        ).fetchall()
+
+        items = [package_payload(cur, pkg) for pkg in packages]
+        if not items:
+            continue
+
+        if search_order:
+            pass
+
+        result.append(
+            {
+                "order_number": order["order_number"],
+                "items_count": len(items),
+                "medicine_count": len(set(item["medicine_name"] for item in items)),
+                "locations": dict(Counter(item["last_location"] for item in items)),
+                "latest_time": max(item["last_event_time"] for item in items if item["last_event_time"]),
+                "status_code": order["status_code"],
+                "status_label": ORDER_STATUS_META[order["status_code"]]["label"],
+                "status_tone": ORDER_STATUS_META[order["status_code"]]["tone"],
+                "items": items,
+            }
+        )
+    return result
+
+
 def dashboard_data(search_code: str = "", search_batch: str = "", search_order: str = "") -> dict:
     conn = get_conn()
     cur = conn.cursor()
-    query = """
-        SELECT DISTINCT p.*
-        FROM packages p
-        LEFT JOIN events e ON e.package_id = p.id
-        WHERE 1=1
-    """
-    params = []
+
+    orders = order_summary_rows(cur, search_order)
     if search_code:
-        query += " AND p.package_code LIKE ?"
-        params.append(f"%{search_code.strip()}%")
+        orders = [o for o in orders if any(search_code.strip().lower() in item["package_code"].lower() for item in o["items"])]
     if search_batch:
-        query += " AND p.batch_number LIKE ?"
-        params.append(f"%{search_batch.strip()}%")
-    if search_order:
-        query += " AND e.order_number LIKE ?"
-        params.append(f"%{search_order.strip()}%")
-    query += " ORDER BY p.id"
-    package_rows = cur.execute(query, params).fetchall()
-    packages = [enrich_package(cur, row) for row in package_rows]
-    orders = build_order_summary(packages)
+        orders = [o for o in orders if any(search_batch.strip().lower() in item["batch_number"].lower() for item in o["items"])]
+
     stock_items = stock_summary(cur)
     conn.close()
+
     return {
         "orders": orders,
         "search_code": search_code,
@@ -597,20 +518,27 @@ def package_details(package_code: str):
     if not package:
         conn.close()
         return JSONResponse({"error": "not_found"}, status_code=404)
-    details = enrich_package(cur, package)
+
+    payload = package_payload(cur, package)
     history = cur.execute(
         "SELECT * FROM events WHERE package_id = ? ORDER BY datetime(event_time) DESC, id DESC",
         (package["id"],),
     ).fetchall()
     conn.close()
-    return {"package": details, "history": [dict(row) for row in history]}
+    return {"package": payload, "history": [dict(row) for row in history]}
 
 
 @app.get("/api/order/{order_number}", response_class=JSONResponse)
 def order_details(order_number: str):
     conn = get_conn()
     cur = conn.cursor()
-    package_rows = cur.execute(
+
+    order = cur.execute("SELECT * FROM orders WHERE order_number = ?", (order_number,)).fetchone()
+    if not order:
+        conn.close()
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    packages = cur.execute(
         """
         SELECT DISTINCT p.*
         FROM packages p
@@ -620,19 +548,18 @@ def order_details(order_number: str):
         """,
         (order_number,),
     ).fetchall()
-    if not package_rows:
-        conn.close()
-        return JSONResponse({"error": "not_found"}, status_code=404)
-    items = [enrich_package(cur, row) for row in package_rows]
-    status_meta = resolve_order_status(items)
+
+    items = [package_payload(cur, pkg) for pkg in packages]
+    warehouses = dict(Counter(item["last_location"] for item in items))
     conn.close()
+
     return {
         "order_number": order_number,
         "total_packages": len(items),
-        "medicines": sorted(list({i["medicine_name"] for i in items})),
-        "warehouses": dict(Counter(i["last_location"] for i in items)),
-        "status_label": status_meta["label"],
-        "status_tone": status_meta["tone"],
+        "medicines": sorted(list({item["medicine_name"] for item in items})),
+        "warehouses": warehouses,
+        "status_label": ORDER_STATUS_META[order["status_code"]]["label"],
+        "status_tone": ORDER_STATUS_META[order["status_code"]]["tone"],
         "items": items,
     }
 
@@ -647,52 +574,68 @@ def create_order(
     quantity: list[int] = Form(...),
     package_code: list[str] = Form(default=[]),
 ):
-    requested_items = []
-    max_len = max(len(medicine_name), len(quantity), len(package_code) if package_code else 0)
-
-    for idx in range(max_len):
-        med = medicine_name[idx].strip() if idx < len(medicine_name) else ""
-        qty_raw = quantity[idx] if idx < len(quantity) else 0
-        pkg_code = package_code[idx].strip() if idx < len(package_code) else ""
-
-        if not med:
-            continue
-
-        qty_value = int(qty_raw)
-        if qty_value <= 0:
-            continue
-
-        requested_items.append(
-            {
-                "medicine_name": med,
-                "quantity": qty_value,
-                "package_code": pkg_code,
-            }
-        )
-
-    if not requested_items:
-        return RedirectResponse(url="/?error=empty_order_items", status_code=303)
-
     conn = get_conn()
     cur = conn.cursor()
-    order_number, allocation_report = create_order_with_items(
-        cur,
-        client_name.strip(),
-        requested_items,
-        warehouse.strip(),
-        created_at,
-        comment.strip(),
+
+    last = cur.execute("SELECT id FROM orders ORDER BY id DESC LIMIT 1").fetchone()
+    next_num = (last["id"] + 1001) if last else 1001
+    order_number = f"ORD-{next_num}"
+
+    cur.execute(
+        "INSERT INTO orders (order_number, client_name, status_code, created_at, comment) VALUES (?, ?, ?, ?, ?)",
+        (order_number, client_name.strip(), "assembling", created_at, comment.strip() or None),
     )
-    has_shortage = any(row["missing"] > 0 for row in allocation_report)
-    status_code = "assembling"
-    if all(row["missing"] == 0 for row in allocation_report):
-        status_code = "seller"
-    cur.execute("UPDATE orders SET status_code = ? WHERE order_number = ?", (status_code, order_number))
+    order_id = cur.lastrowid
+
+    current_time = datetime.fromisoformat(created_at)
+
+    for idx in range(max(len(medicine_name), len(quantity), len(package_code) if package_code else 0)):
+        med = medicine_name[idx].strip() if idx < len(medicine_name) else ""
+        qty = int(quantity[idx]) if idx < len(quantity) else 0
+        code = package_code[idx].strip() if idx < len(package_code) else ""
+
+        if not med or qty <= 0:
+            continue
+
+        assigned = []
+
+        if code:
+            manual_or_existing = create_manual_package_for_order(cur, code, med, warehouse, created_at)
+            assigned.append(manual_or_existing)
+
+        while len(assigned) < qty:
+            free_pack = free_packages_by_medicine(cur, med, 1)
+            if free_pack:
+                assigned.append(free_pack[0])
+            else:
+                generated_code = f"PACK-N{order_id:03d}{idx}{len(assigned)+1}"
+                assigned.append(create_manual_package_for_order(cur, generated_code, med, warehouse, created_at))
+
+        cur.execute(
+            "INSERT INTO order_items (order_id, medicine_name, quantity, assigned_quantity) VALUES (?, ?, ?, ?)",
+            (order_id, med, qty, len(assigned)),
+        )
+
+        for p_idx, package in enumerate(assigned):
+            package_id = package["id"]
+            current_time += timedelta(minutes=3)
+            add_event(
+                cur,
+                package_id,
+                "accepted",
+                "accepted",
+                warehouse,
+                current_time,
+                "Упаковка зарезервирована под новый заказ",
+                order_number,
+                client_name.strip(),
+            )
+
+    cur.execute("UPDATE orders SET status_code = 'seller' WHERE id = ?", (order_id,))
     conn.commit()
     conn.close()
 
-    suffix = "created_with_shortage" if has_shortage else "created"
-    return RedirectResponse(url=f"/?order={order_number}&created_order={order_number}&result={suffix}", status_code=303)
+    return RedirectResponse(url=f"/?order={order_number}", status_code=303)
 
 
 @app.post("/events")
@@ -712,35 +655,22 @@ def create_event(
     if not package:
         conn.close()
         return RedirectResponse(url="/?error=package_not_found", status_code=303)
-    cur.execute(
-        "INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (package["id"], event_type, status, location.strip(), counterparty.strip() or None, event_time, note.strip() or None, order_number.strip() or None),
-    )
-    conn.commit()
-    conn.close()
-    return RedirectResponse(url=f"/?code={package_code.strip()}", status_code=303)
 
-
-@app.post("/packages")
-def create_package(
-    package_code: str = Form(...),
-    batch_number: str = Form(...),
-    medicine_name: str = Form(...),
-    produced_at: str = Form(...),
-    first_location: str = Form(...),
-    order_number: str = Form(default=""),
-    note: str = Form(default="Создано вручную"),
-):
-    conn = get_conn()
-    cur = conn.cursor()
     cur.execute(
-        "INSERT INTO packages (package_code, batch_number, medicine_name, produced_at) VALUES (?, ?, ?, ?)",
-        (package_code.strip(), batch_number.strip(), medicine_name.strip(), produced_at),
-    )
-    package_id = cur.lastrowid
-    cur.execute(
-        "INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number) VALUES (?, 'accepted', 'accepted', ?, 'Ручной ввод', ?, ?, ?)",
-        (package_id, first_location.strip(), produced_at, note.strip(), order_number.strip() or None),
+        """
+        INSERT INTO events (package_id, event_type, status, location, counterparty, event_time, note, order_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            package["id"],
+            event_type,
+            status,
+            location.strip(),
+            counterparty.strip() or None,
+            event_time,
+            note.strip() or None,
+            order_number.strip() or None,
+        ),
     )
     conn.commit()
     conn.close()

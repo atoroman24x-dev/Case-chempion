@@ -206,3 +206,14 @@ if (addOrderItemButton && orderItemsContainer) {
   });
   bindRemoveButtons();
 }
+
+const showMoreOrdersButton = document.getElementById('show-more-orders');
+
+if (showMoreOrdersButton) {
+  showMoreOrdersButton.addEventListener('click', () => {
+    document.querySelectorAll('.order-row-hidden').forEach((row) => {
+      row.classList.remove('order-row-hidden');
+    });
+    showMoreOrdersButton.remove();
+  });
+}

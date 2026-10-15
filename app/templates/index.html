@@ -57,9 +57,9 @@
                   <th></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="orders-table-body">
                 {% for order in orders %}
-                <tr class="order-row">
+                <tr class="order-row{% if loop.index > 10 %} order-row-hidden{% endif %}">
                   <td><strong>{{ order.order_number }}</strong></td>
                   <td>{{ order.items_count }}</td>
                   <td>{{ order.medicine_count }}</td>
@@ -78,6 +78,12 @@
               </tbody>
             </table>
           </div>
+
+          {% if orders|length > 10 %}
+          <div class="actions" style="margin-top: 16px;">
+            <button class="btn btn-ghost" type="button" id="show-more-orders">Показать ещё</button>
+          </div>
+          {% endif %}
         </section>
 
         <section class="panel">
