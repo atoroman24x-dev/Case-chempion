@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Где моё лекарство V2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">PT</div>
+      <div>
+        <p class="eyebrow">Пульс-АйТим · advanced</p>
+        <h1>Где моё лекарство?</h1>
+      </div>
+    </div>
+    <button class="theme-toggle" data-theme-toggle>◐</button>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Контроль движения лекарственных упаковок</p>
+        <h2>Живой мониторинг серий, статусов и подтверждённых перемещений</h2>
+        <p class="hero-text">Новый вариант интерфейса с более понятными статусами, интерактивной лентой событий и детализацией по упаковке.</p>
+      </div>
+      <div class="stats-grid">
+        <article class="stat-card"><span>Всего упаковок</span><strong>{{ metrics.packages }}</strong></article>
+        <article class="stat-card"><span>В выборке</span><strong>{{ metrics.filtered }}</strong></article>
+        <article class="stat-card"><span>Нет подтверждения</span><strong>{{ metrics.delayed }}</strong></article>
+        <article class="stat-card"><span>В пути</span><strong>{{ metrics.in_transit }}</strong></article>
+      </div>
+    </section>
+
+    <section class="toolbar panel">
+      <form method="get" class="filters">
+        <div class="field">
+          <label>Код упаковки</label>
+          <input name="code" value="{{ search_code }}" placeholder="PKG-V2-00001">
+        </div>
+        <div class="field">
+          <label>Серия</label>
+          <input name="batch" value="{{ search_batch }}" placeholder="BATCH-AX2401">
+        </div>
+        <div class="field">
+          <label>Статус</label>
+          <select name="status">
+            <option value="">Все статусы</option>
+            {% for key, label in status_labels.items() %}
+              <option value="{{ key }}" {% if status_filter == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Применить</button>
+          <a class="btn btn-ghost" href="/">Сбросить</a>
+        </div>
+      </form>
+    </section>
+
+    <section class="layout-grid">
+      <div class="main-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Список упаковок</p>
+              <h3>Последнее подтверждённое состояние</h3>
+            </div>
+            <span class="pill">{{ packages|length }}</span>
+          </div>
+
+          <div class="package-list">
+            {% for item in packages %}
+            <article class="package-card package-row" data-package-code="{{ item.package_code }}">
+              <div class="package-top">
+                <div>
+                  <h4>{{ item.package_code }}</h4>
+                  <p>{{ item.medicine_name }} · {{ item.batch_number }}</p>
+                </div>
+                <span class="status-chip status-{{ item.status_color }}">{{ item.status_label }}</span>
+              </div>
+
+              <div class="package-meta">
+                <div><span>Локация</span><strong>{{ item.last_location }}</strong></div>
+                <div><span>Событие</span><strong>{{ item.last_event_label }}</strong></div>
+                <div><span>Обновлено</span><strong>{{ item.last_event_time }}</strong></div>
+                <div><span>Событий</span><strong>{{ item.events_count }}</strong></div>
+              </div>
+
+              {% if item.warning %}
+              <div class="alert-row">{{ item.warning }}</div>
+              {% endif %}
+
+              {% if item.suspicious %}
+              <div class="hint-row">Обнаружено быстрое перемещение между точками, стоит проверить маршрут.</div>
+              {% endif %}
+            </article>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Аналитика серий</p>
+              <h3>Группировка по складам и статусам</h3>
+            </div>
+          </div>
+
+          <div class="batch-grid">
+            {% for batch, block in grouped_batches.items() %}
+            <article class="batch-card">
+              <div class="batch-header">
+                <div>
+                  <h4>{{ batch }}</h4>
+                  <p>{{ block["items"]|length }} упаковок в выборке</p>
+                </div>
+                <span class="pill">{{ block["items"]|length }}</span>
+              </div>
+
+              <div class="batch-columns">
+                <div>
+                  <p class="mini-title">Локации</p>
+                  <ul>
+                    {% for location, qty in block["warehouses"].items() %}
+                    <li><span>{{ location }}</span><strong>{{ qty }}</strong></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+
+                <div>
+                  <p class="mini-title">Статусы</p>
+                  <ul>
+                    {% for status_name, qty in block["statuses"].items() %}
+                    <li><span>{{ status_name }}</span><strong>{{ qty }}</strong></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+        </section>
+      </div>
+
+      <aside class="side-column">
+        <section class="panel detail-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Карточка упаковки</p>
+              <h3 id="detail-title">Выбери упаковку</h3>
+            </div>
+            <span id="detail-status" class="pill">ожидание</span>
+          </div>
+
+          <div id="detail-summary" class="detail-summary">
+            Нажми на любую упаковку слева, чтобы открыть маршрут, статусы и историю событий.
+          </div>
+
+          <div id="detail-warning"></div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Последние события</p>
+              <h3>Лента движения</h3>
+            </div>
+          </div>
+
+          <div class="feed-list">
+            {% for event in recent_events %}
+            <article class="feed-card">
+              <div class="feed-top">
+                <strong>{{ event.package_code }}</strong>
+                <span class="pill">{{ event.event_time }}</span>
+              </div>
+              <div class="feed-body">
+                <span class="status-chip status-{{ event.status_color }}">{{ event.status_label }}</span>
+                <p>{{ event.event_label }} · {{ event.location }}</p>
+                <small>{{ event.medicine_name }} · {{ event.batch_number }}</small>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="panel form-panel">
+          <h3>Добавить событие</h3>
+          <form method="post" action="/events" class="stack-form">
+            <div class="field"><label>Код упаковки</label><input name="package_code" required></div>
+
+            <div class="field">
+              <label>Тип события</label>
+              <select name="event_type">
+                {% for key, label in event_labels.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Статус</label>
+              <select name="status">
+                {% for key, label in status_labels.items() %}
+                  {% if key != 'delayed' %}
+                  <option value="{{ key }}">{{ label }}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="field"><label>Локация</label><input name="location" required></div>
+            <div class="field"><label>Контрагент</label><input name="counterparty"></div>
+            <div class="field"><label>Дата и время</label><input type="datetime-local" name="event_time" required></div>
+            <div class="field"><label>Номер заказа</label><input name="order_number"></div>
+            <div class="field"><label>Комментарий</label><textarea name="note" rows="3"></textarea></div>
+            <button class="btn btn-primary" type="submit">Сохранить событие</button>
+          </form>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" data-theme="light">
+<html lang="ru" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -21,25 +21,21 @@
     </div>
     <button class="theme-toggle" data-theme-toggle aria-label="Переключить тему">◐</button>
   </header>
+
   <main id="content" class="layout">
-    <section class="hero-card">
+    <section class="hero-card hero-card--compact">
       <div>
-        <p class="eyebrow">Отслеживание упаковок препаратов</p>
-        <h2>Контроль движения серий, складов и клиентских отгрузок</h2>
-        <p class="hero-text">Поиск по коду упаковки и серии, история перемещений, регистрация новых событий и сохранение данных в общей тестовой базе.</p>
-      </div>
-      <div class="metric-grid">
-        <article class="metric-card"><span>Упаковок</span><strong>{{ metrics.packages }}</strong></article>
-        <article class="metric-card"><span>Событий</span><strong>{{ metrics.events }}</strong></article>
-        <article class="metric-card"><span>Серий</span><strong>{{ metrics.batches }}</strong></article>
-        <article class="metric-card warning"><span>Без обновлений</span><strong>{{ metrics.stale }}</strong></article>
+        <p class="eyebrow">Контроль цепочки движения препаратов</p>
+        <h2>Заказы, их статусы и содержимое</h2>
+        <p class="hero-text">Система помогает искать заказ, серию или упаковку, смотреть текущее состояние заказов и открывать их содержимое с деталями по каждой упаковке.</p>
       </div>
     </section>
 
     <section class="panel filters-panel">
       <form method="get" class="search-form">
-        <div class="field"><label for="code">Поиск упаковки</label><input id="code" name="code" value="{{ search_code }}" placeholder="PACK-00017"></div>
+        <div class="field"><label for="order">Поиск заказа</label><input id="order" name="order" value="{{ search_order }}" placeholder="ORD-1001"></div>
         <div class="field"><label for="batch">Поиск серии</label><input id="batch" name="batch" value="{{ search_batch }}" placeholder="BATCH-AX2401"></div>
+        <div class="field"><label for="code">Поиск упаковки</label><input id="code" name="code" value="{{ search_code }}" placeholder="PACK-00017"></div>
         <div class="actions"><button class="btn btn-primary" type="submit">Найти</button><a class="btn btn-ghost" href="/">Сбросить</a></div>
       </form>
     </section>
@@ -47,30 +43,43 @@
     <section class="content-grid">
       <div class="left-column">
         <section class="panel">
-          <div class="section-title-row"><h3>Результаты поиска</h3><span class="count-pill">{{ packages|length }}</span></div>
+          <div class="section-title-row"><h3>Заказы</h3><span class="count-pill">{{ orders|length }}</span></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Код</th><th>Серия</th><th>Препарат</th><th>Последнее место</th><th>Статус</th><th>Подтверждено</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Заказ</th>
+                  <th>Упаковок</th>
+                  <th>Препаратов</th>
+                  <th>Точки</th>
+                  <th>Статус</th>
+                  <th>Последнее обновление</th>
+                  <th></th>
+                </tr>
+              </thead>
               <tbody>
-                {% for item in packages %}
-                <tr class="package-row" data-package-code="{{ item.package_code }}">
-                  <td>{{ item.package_code }}</td>
-                  <td>{{ item.batch_number }}</td>
-                  <td>{{ item.medicine_name }}</td>
-                  <td>{{ item.last_location }}</td>
+                {% for order in orders %}
+                <tr class="order-row">
+                  <td><strong>{{ order.order_number }}</strong></td>
+                  <td>{{ order.items_count }}</td>
+                  <td>{{ order.medicine_count }}</td>
                   <td>
-                    <span class="status-chip {% if item.stale %}status-delayed{% endif %}">{{ item.status_label }}</span>
-                    {% if item.suspicious %}<span class="mini-flag">быстрое перемещение</span>{% endif %}
+                    {% for name, qty in order.locations.items() %}
+                    <div class="cell-stack"><span>{{ name }}</span><strong>{{ qty }}</strong></div>
+                    {% endfor %}
                   </td>
-                  <td>{{ item.last_event_time or '—' }}</td>
+                  <td><span class="status-chip status-{{ order.status_tone }}">{{ order.status_label }}</span></td>
+                  <td>{{ order.latest_time[:16]|replace('T', ' ') if order.latest_time else '—' }}</td>
+                  <td><button class="tiny-btn js-open-order" type="button" data-order-number="{{ order.order_number }}">Открыть</button></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="empty-cell">Ничего не найдено</td></tr>
+                <tr><td colspan="7" class="empty-cell">Ничего не найдено</td></tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
         </section>
+<<<<<<< HEAD
 
         <section class="panel">
           <div class="section-title-row"><h3>Серии по складам и статусам</h3></div>
@@ -103,20 +112,24 @@
             {% endfor %}
           </div>
         </section>
+=======
+>>>>>>> fb28fbf (Finalize orders UI and timeline display)
       </div>
 
       <aside class="right-column">
         <section class="panel detail-panel">
-          <div class="section-title-row"><h3>История упаковки</h3><span id="detail-code" class="count-pill">выбери строку</span></div>
-          <div id="detail-meta" class="detail-meta">Нажми на упаковку в таблице, чтобы посмотреть маршрут и события.</div>
+          <div class="section-title-row"><h3>Содержимое заказа</h3><span id="detail-code" class="count-pill">выбери заказ</span></div>
+          <div id="detail-meta" class="detail-meta">Нажми на заказ, чтобы открыть входящие упаковки и посмотреть их состав.</div>
           <div id="detail-warning"></div>
-          <div id="timeline" class="timeline"></div>
+          <div id="order-summary" class="order-summary"></div>
+          <div id="timeline" class="timeline hidden"></div>
         </section>
 
         <section class="panel form-panel">
           <h3>Добавить событие</h3>
           <form method="post" action="/events" class="stack-form">
             <div class="field"><label>Код упаковки</label><input name="package_code" placeholder="PACK-00017" required></div>
+            <div class="field"><label>Номер заказа</label><input name="order_number" placeholder="ORD-1015"></div>
             <div class="field"><label>Тип события</label><select name="event_type">{% for key, label in event_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
             <div class="field">
   <label>Статус</label>
@@ -131,27 +144,14 @@
             <div class="field"><label>Локация</label><input name="location" placeholder="Склад Ростов" required></div>
             <div class="field"><label>Контрагент</label><input name="counterparty" placeholder="Аптека Вита / Склад Москва"></div>
             <div class="field"><label>Дата и время</label><input type="datetime-local" name="event_time" required></div>
-            <div class="field"><label>Номер заказа</label><input name="order_number" placeholder="SHIP-1042"></div>
             <div class="field"><label>Комментарий</label><textarea name="note" rows="3" placeholder="Подтверждение передачи"></textarea></div>
             <button class="btn btn-primary" type="submit">Сохранить событие</button>
-          </form>
-        </section>
-
-        <section class="panel form-panel">
-          <h3>Добавить упаковку</h3>
-          <form method="post" action="/packages" class="stack-form">
-            <div class="field"><label>Код упаковки</label><input name="package_code" placeholder="PACK-90001" required></div>
-            <div class="field"><label>Серия</label><input name="batch_number" placeholder="BATCH-NEW2405" required></div>
-            <div class="field"><label>Препарат</label><input name="medicine_name" placeholder="Кардиолекс" required></div>
-            <div class="field"><label>Дата производства / приёмки</label><input type="datetime-local" name="produced_at" required></div>
-            <div class="field"><label>Первое местонахождение</label><select name="first_location">{% for warehouse in warehouses %}<option value="{{ warehouse }}">{{ warehouse }}</option>{% endfor %}</select></div>
-            <div class="field"><label>Комментарий</label><textarea name="note" rows="3" placeholder="Новая упаковка для проверки"></textarea></div>
-            <button class="btn btn-primary" type="submit">Создать упаковку</button>
           </form>
         </section>
       </aside>
     </section>
   </main>
+
   <script src="/static/app.js" defer></script>
 </body>
 </html>

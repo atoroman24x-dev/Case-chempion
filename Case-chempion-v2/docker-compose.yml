@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  pharma-tracker-v2:
+    build: .
+    container_name: pharma-tracker-v2
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
