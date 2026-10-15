@@ -79,7 +79,7 @@
             <article class="batch-card">
               <div class="batch-card-head">
                 <div><p class="eyebrow">Серия</p><h4>{{ batch }}</h4></div>
-                <span class="count-pill">{{ block.items|length }}</span>
+                <span class="count-pill">{{ block["items"]|length }}</span>
               </div>
               <div class="batch-columns">
                 <div>
@@ -118,7 +118,16 @@
           <form method="post" action="/events" class="stack-form">
             <div class="field"><label>Код упаковки</label><input name="package_code" placeholder="PACK-00017" required></div>
             <div class="field"><label>Тип события</label><select name="event_type">{% for key, label in event_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
-            <div class="field"><label>Статус</label><select name="status">{% for key, label in statuses.items() if key != 'delayed' %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+            <div class="field">
+  <label>Статус</label>
+  <select name="status">
+    {% for key, label in statuses.items() %}
+      {% if key != 'delayed' %}
+        <option value="{{ key }}">{{ label }}</option>
+      {% endif %}
+    {% endfor %}
+  </select>
+</div>
             <div class="field"><label>Локация</label><input name="location" placeholder="Склад Ростов" required></div>
             <div class="field"><label>Контрагент</label><input name="counterparty" placeholder="Аптека Вита / Склад Москва"></div>
             <div class="field"><label>Дата и время</label><input type="datetime-local" name="event_time" required></div>
