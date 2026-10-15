@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+pharma_tracker_demo.db
+test_database_for_demo.sqlite
+.DS_Store
