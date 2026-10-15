@@ -80,34 +80,7 @@
           </div>
         </section>
 
-          <div class="batch-grid">
-            {% for batch, block in grouped_batches.items() %}
-            <article class="batch-card">
-              <div class="batch-card-head">
-                <div><p class="eyebrow">Серия</p><h4>{{ batch }}</h4></div>
-                <span class="count-pill">{{ block["items"]|length }}</span>
-              </div>
-              <div class="batch-columns">
-                <div>
-                  <p class="mini-title">Склады / точки</p>
-                  <ul>
-                    {% for location, qty in block.warehouses.items() %}
-                    <li><span>{{ location }}</span><strong>{{ qty }}</strong></li>
-                    {% endfor %}
-                  </ul>
-                </div>
-                <div>
-                  <p class="mini-title">Статусы</p>
-                  <ul>
-                    {% for status, qty in block.statuses.items() %}
-                    <li><span>{{ status }}</span><strong>{{ qty }}</strong></li>
-                    {% endfor %}
-                  </ul>
-                </div>
-              </div>
-            </article>
-            {% endfor %}
-          </div>
+
         </section>
       </div>
 
