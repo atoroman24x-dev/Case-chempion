@@ -476,17 +476,37 @@ def dashboard_data(search_code: str = "", search_batch: str = "", search_order: 
     conn = get_conn()
     cur = conn.cursor()
 
+    search_code = search_code.strip()
+    search_batch = search_batch.strip()
+    search_order = search_order.strip()
+
     orders = order_summary_rows(cur, search_order)
+    package_result = None
+    batch_results = []
+
     if search_code:
-        orders = [o for o in orders if any(search_code.strip().lower() in item["package_code"].lower() for item in o["items"])]
-    if search_batch:
-        orders = [o for o in orders if any(search_batch.strip().lower() in item["batch_number"].lower() for item in o["items"])]
+        package = cur.execute(
+            "SELECT * FROM packages WHERE lower(package_code) = lower(?)",
+            (search_code,),
+        ).fetchone()
+        if package:
+            package_result = package_payload(cur, package)
+        orders = []
+    elif search_batch:
+        batch_packages = cur.execute(
+            "SELECT * FROM packages WHERE lower(batch_number) LIKE lower(?) ORDER BY id",
+            (f"%{search_batch}%",),
+        ).fetchall()
+        batch_results = [package_payload(cur, pkg) for pkg in batch_packages]
+        orders = []
 
     stock_items = stock_summary(cur)
     conn.close()
 
     return {
         "orders": orders,
+        "package_result": package_result,
+        "batch_results": batch_results,
         "search_code": search_code,
         "search_batch": search_batch,
         "search_order": search_order,

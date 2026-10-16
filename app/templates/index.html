@@ -42,6 +42,69 @@
 
     <section class="content-grid">
       <div class="left-column">
+        {% if search_code %}
+        <section class="panel">
+          <div class="section-title-row"><h3>Поиск по номеру упаковки</h3><span class="count-pill">{{ 1 if package_result else 0 }}</span></div>
+          {% if package_result %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Упаковка</th>
+                  <th>Серия</th>
+                  <th>Препарат</th>
+                  <th>Текущее местоположение</th>
+                  <th>Номер заказа</th>
+                  <th>Последнее обновление</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>{{ package_result.package_code }}</strong></td>
+                  <td>{{ package_result.batch_number }}</td>
+                  <td>{{ package_result.medicine_name }}</td>
+                  <td>{{ package_result.last_location }}</td>
+                  <td>{{ package_result.order_number or 'Не привязана к заказу' }}</td>
+                  <td>{{ package_result.last_event_time[:16]|replace('T', ' ') if package_result.last_event_time else '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-cell">Упаковка не найдена</div>
+          {% endif %}
+        </section>
+        {% elif search_batch %}
+        <section class="panel">
+          <div class="section-title-row"><h3>Поиск по серии</h3><span class="count-pill">{{ batch_results|length }}</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Упаковка</th>
+                  <th>Серия</th>
+                  <th>Препарат</th>
+                  <th>Текущее местоположение</th>
+                  <th>Последнее обновление</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in batch_results %}
+                <tr>
+                  <td><strong>{{ item.package_code }}</strong></td>
+                  <td>{{ item.batch_number }}</td>
+                  <td>{{ item.medicine_name }}</td>
+                  <td>{{ item.last_location }}</td>
+                  <td>{{ item.last_event_time[:16]|replace('T', ' ') if item.last_event_time else '—' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="empty-cell">По серии ничего не найдено</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {% else %}
         <section class="panel">
           <div class="section-title-row"><h3>Заказы</h3><span class="count-pill">{{ orders|length }}</span></div>
           <div class="table-wrap">
@@ -85,30 +148,8 @@
           </div>
           {% endif %}
         </section>
+        {% endif %}
 
-        <section class="panel">
-          <div class="section-title-row"><h3>Свободный остаток</h3><span class="count-pill">{{ stock_items|length }}</span></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Препарат</th>
-                  <th>Свободных упаковок</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for item in stock_items %}
-                <tr>
-                  <td>{{ item.medicine_name }}</td>
-                  <td>{{ item.qty }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="2" class="empty-cell">Свободных остатков нет</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </section>
       </div>
 
       <aside class="right-column">
