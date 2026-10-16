@@ -1,12 +1,20 @@
 const html = document.documentElement;
 const toggle = document.querySelector('[data-theme-toggle]');
-let theme = 'dark';
-html.setAttribute('data-theme', theme);
+
+let theme = html.getAttribute('data-theme') || 'dark';
+
+function applyTheme(nextTheme) {
+  theme = nextTheme;
+  html.setAttribute('data-theme', theme);
+  try {
+    localStorage.setItem('theme', theme);
+  } catch (e) {}
+}
 
 if (toggle) {
   toggle.addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-theme', theme);
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    applyTheme(nextTheme);
   });
 }
 
