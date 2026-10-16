@@ -121,7 +121,6 @@ async function loadOrderDetails(orderNumber) {
       <td>${item.batch_number}</td>
       <td>${item.last_location}</td>
       <td>${item.status_label}</td>
-      <td><button class="tiny-btn js-open-package-inline" type="button" data-package-code="${item.package_code}">Открыть</button></td>
     </tr>
   `).join('');
 
@@ -149,7 +148,6 @@ async function loadOrderDetails(orderNumber) {
             <th>Серия</th>
             <th>Последнее место</th>
             <th>Статус</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>${itemsRows}</tbody>
@@ -157,9 +155,6 @@ async function loadOrderDetails(orderNumber) {
     </div>
   `;
 
-  orderSummary.querySelectorAll('.js-open-package-inline').forEach((button) => {
-    button.addEventListener('click', () => loadPackageDetails(button.dataset.packageCode));
-  });
 }
 
 document.querySelectorAll('.js-open-order').forEach((button) => {
@@ -167,7 +162,9 @@ document.querySelectorAll('.js-open-order').forEach((button) => {
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('order')) {
+if (params.get('code')) {
+  loadPackageDetails(params.get('code'));
+} else if (params.get('order')) {
   loadOrderDetails(params.get('order'));
 }
 

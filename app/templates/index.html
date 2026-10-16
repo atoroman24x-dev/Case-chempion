@@ -165,6 +165,15 @@
       </div>
 
       <aside class="right-column">
+        {% if search_code %}
+        <section class="panel detail-panel">
+          <div class="section-title-row"><h3>История перемещений упаковки</h3><span id="detail-code" class="count-pill">{{ search_code or 'выбери упаковку' }}</span></div>
+          <div id="detail-meta" class="detail-meta">Показывается полная история перемещений найденной упаковки.</div>
+          <div id="detail-warning"></div>
+          <div id="order-summary" class="order-summary"></div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+        {% else %}
         <section class="panel detail-panel">
           <div class="section-title-row"><h3>Содержимое заказа</h3><span id="detail-code" class="count-pill">выбери заказ</span></div>
           <div id="detail-meta" class="detail-meta">Нажми на заказ, чтобы открыть входящие упаковки и посмотреть их состав.</div>
@@ -172,6 +181,7 @@
           <div id="order-summary" class="order-summary"></div>
           <div id="timeline" class="timeline hidden"></div>
         </section>
+        {% endif %}
 
         <section class="panel form-panel">
           <h3>Создать новый заказ</h3>
